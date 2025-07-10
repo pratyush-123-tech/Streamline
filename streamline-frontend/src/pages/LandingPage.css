@@ -1,0 +1,135 @@
+ .landingPageContainer {
+    height: 100vh;
+    width: 100vw;
+    background: url("/background.png") no-repeat center center;
+    background-size: cover;
+    font-family: 'Segoe UI', sans-serif;
+    overflow: hidden;
+  }
+  
+  .navHeader {
+    color: white;
+    padding-top: 0.3rem;
+    font-size: 1.5rem;
+    font-weight: 600;
+  }
+  
+  .parent {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 1rem 2rem;
+  }
+  
+  .navList {
+    display: flex;
+    gap: 1.2rem;
+  }
+  
+  .navItem {
+    color: white;
+    font-size: 1rem;
+    cursor: pointer;
+    transition: color 0.3s ease;
+  }
+  
+  .navItem:hover {
+    color: #ff9839;
+  }
+  
+ 
+  .landingPageMain {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 4rem;
+    height: calc(100vh - 80px);  
+    color: white;
+    gap: 2rem;
+  }
+  
+  .landingText {
+    padding-left: 2rem;
+    max-width: 500px;
+  }
+  
+  .landingTextHeading {
+    font-size: 3rem;
+    font-weight: bold;
+    line-height: 1.2;
+  }
+  
+  .landingTextHeading span {
+    color: #ff9839;
+  }
+  
+  .landingText p {
+    font-size: 1.2rem;
+    margin-top: 1rem;
+  }
+  
+  .landingTextButton {
+    background-color: #ff9839;
+    color: white;
+    height: 3rem;
+    width: 8rem;
+    margin-top: 1.5rem;
+    border-radius: 2rem;
+    border: none;
+    font-size: 1rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: background-color 0.3s ease;
+  }
+  
+  .landingTextButton:hover {
+    background-color: #e8771d;
+  }
+  
+  .landingTextButton a {
+    text-decoration: none;
+    color: white;
+    display: inline-block;
+    width: 100%;
+    height: 100%;
+    line-height: 3rem;
+  }
+  
+
+  .landingImage {
+    padding-top: 8vh;
+    padding-right: 4rem;
+  }
+  
+  .landingImage img {
+    height: 70vh;
+    width: auto;
+    
+  }
+  
+
+  @media (max-width: 768px) {
+    .landingPageMain {
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      padding: 2rem;
+      text-align: center;
+    }
+  
+    .landingText {
+      padding: 0;
+    }
+  
+    .landingTextHeading {
+      font-size: 2.4rem;
+    }
+  
+    .landingImage {
+      padding: 2rem 0 0;
+    }
+  
+    .landingImage img {
+      height: 50vh;
+    }
+  }
