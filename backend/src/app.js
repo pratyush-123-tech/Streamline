@@ -1,7 +1,8 @@
+import "dotenv/config"
 import express from "express"
 import {createServer} from "node:http"
 import {Server} from "socket.io"
-
+import "dotenv/config"
 
 import mongoose from "mongoose"
 import cors from "cors"
@@ -18,7 +19,7 @@ app.use(express.json({limit:"40kb"}));
 app.use(express.urlencoded({limit:"40kb",extended:true}));
 app.use("/",userRoutes);
 const start=async ()=>{
-    const connectionDB=await mongoose.connect("mongodb+srv://pratyushchaudhary4002:hTi0q3Og95fXRUBC@cluster0.dkrpugk.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0");
+    const connectionDB=await mongoose.connect(process.env.MONGO_URL);
     server.listen(app.get("port"),()=>{
         console.log("server working fine");
     })
