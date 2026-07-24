@@ -11,18 +11,21 @@ let connections = {}
 let messages = {}
 let timesOnline = {}
 
-// NEW: in-memory transcript buffer, keyed by the same "path" used for connections/messages
+// in-memory transcript buffer, keyed by the same "path" used for connections/messages
 let transcripts = {}
+
+// per-socket meta: { username, audio, video } – used to bootstrap new joiners
+let userMeta = {}
 
 export const connectToSocket = (server) => {
     const io = new Server(server, {
         cors: {
-            origin: "*",
+            origin: process.env.FRONTEND_URL || "http://localhost:5173",
             methods: ["GET", "POST"],
-            allowedHeaders: ["*"],
-            credentials: true
+            credentials: true,
         }
     });
+
     io.on("connection", (socket) => {
         console.log("something connected");
         socket.on("join-call", (path) => {
@@ -32,19 +35,60 @@ export const connectToSocket = (server) => {
             }
             connections[path].push(socket.id);
             timesOnline[socket.id] = new Date();
+
             for (let i = 0; i < connections[path].length; i++) {
                 io.to(connections[path][i]).emit("user-joined", socket.id, connections[path]);
-
             }
+
+            // send existing chat history to the new joiner
             if (messages[path] !== undefined) {
                 for (let i = 0; i < messages[path].length; i++) {
                     io.to(socket.id).emit("chat-message", messages[path][i]['data'], messages[path][i]['sender'], messages[path][i]['socket-id-sender']);
+                }
+            }
 
+            // send existing peers' meta to the new joiner so they see names/av state immediately
+            for (const [sid, meta] of Object.entries(userMeta)) {
+                if (connections[path] && connections[path].includes(sid) && sid !== socket.id) {
+                    io.to(socket.id).emit("user-meta", { socketId: sid, ...meta });
                 }
             }
         });
         socket.on("signal", (toID, message) => {
             io.to(toID).emit("signal", socket.id, message);
+        });
+
+        // ---------- user-meta: store username+av and relay to others ----------
+        socket.on("user-meta", ({ username, audio, video }) => {
+            userMeta[socket.id] = { username, audio, video };
+            // relay to all other members of whichever room this socket is in
+            for (const [roomKey, users] of Object.entries(connections)) {
+                if (users.includes(socket.id)) {
+                    users.forEach((id) => {
+                        if (id !== socket.id) {
+                            io.to(id).emit("user-meta", { socketId: socket.id, username, audio, video });
+                        }
+                    });
+                    break;
+                }
+            }
+        });
+
+        // ---------- av-change: relay mic/cam toggle to peers ----------
+        socket.on("av-change", ({ audio, video }) => {
+            if (userMeta[socket.id]) {
+                userMeta[socket.id] = { ...userMeta[socket.id], audio, video };
+            }
+            for (const [roomKey, users] of Object.entries(connections)) {
+                if (users.includes(socket.id)) {
+                    users.forEach((id) => {
+                        if (id !== socket.id) {
+                            io.to(id).emit("av-change", { socketId: socket.id, audio, video });
+                        }
+                    });
+                    break;
+                }
+            }
         });
         socket.on("chat-message", (data, sender) => {
             let isFound = false;
@@ -133,6 +177,7 @@ export const connectToSocket = (server) => {
             let diffTime = Math.abs(timesOnline[socket.id] - new Date());
             let key = '';
             let index = -1;
+            delete userMeta[socket.id]; // clean up user meta on disconnect
             for (const [roomKey, users] of Object.entries(connections)) {
                 for (let i = 0; i < users.length; i++) {
                     if (users[i] === socket.id) {
@@ -144,13 +189,12 @@ export const connectToSocket = (server) => {
                         connections[key].splice(index, 1);
                         if (connections[key].length === 0) {
                             delete connections[key];
-                            delete transcripts[key]; // NEW: clean up if the room is now empty
+                            delete messages[key];       // clear chat history when room empties
+                            delete transcripts[key];    // clear transcript when room empties
                         }
                     }
                 }
-
             }
-
         })
     })
     return io;

@@ -1,6 +1,5 @@
 import React, { useEffect, useRef, useState } from "react"
-const server_url="http://localhost:8080";
-import io, { connect } from "socket.io-client";
+import io from "socket.io-client";
 import VideocamIcon from '@mui/icons-material/Videocam';
 import VideocamOffIcon from '@mui/icons-material/VideocamOff'
 import CallEndIcon from '@mui/icons-material/CallEnd'
@@ -11,28 +10,38 @@ import StopScreenShareIcon from '@mui/icons-material/StopScreenShare'
 import ChatIcon from '@mui/icons-material/Chat'
 import jsPDF from "jspdf"
 import { useNavigate } from "react-router-dom"
-var connections = {};
+import { IconButton } from '@mui/material';
 import "./VideoCall.css"
-import {
-    Avatar, 
-    Button,
-    CssBaseline,
-    TextField,
-    FormControlLabel,
-    Checkbox,
-    Link,
-    Grid,
-    Box,
-    Typography,
-    Paper,
-    IconButton,
-    Badge
-  } from '@mui/material';
+var connections = {};
+
+const server_url = import.meta.env.VITE_BACKEND_URL || "http://localhost:8080";
+
+
 const peerConfigConnections = {
-    "iceServers": [
-        { "urls": "stun:stun.l.google.com:19302" }
-    ]
-}
+    iceServers: [
+        { urls: "stun:stun.l.google.com:19302" },
+        // TURN server – required for peers behind different NATs (e.g. mobile vs home)
+        // Credentials come from Metered.ca (set VITE_TURN_USERNAME + VITE_TURN_PASSWORD in .env)
+        ...(import.meta.env.VITE_TURN_USERNAME ? [
+            {
+                urls: "turn:a.relay.metered.ca:80",
+                username: import.meta.env.VITE_TURN_USERNAME,
+                credential: import.meta.env.VITE_TURN_PASSWORD,
+            },
+            {
+                urls: "turn:a.relay.metered.ca:443",
+                username: import.meta.env.VITE_TURN_USERNAME,
+                credential: import.meta.env.VITE_TURN_PASSWORD,
+            },
+            {
+                urls: "turns:a.relay.metered.ca:443?transport=tcp",
+                username: import.meta.env.VITE_TURN_USERNAME,
+                credential: import.meta.env.VITE_TURN_PASSWORD,
+            },
+        ] : []),
+    ],
+};
+
 export default function VideoCall(){
     const navigate = useNavigate();
     var socketRef = useRef();
@@ -52,7 +61,7 @@ export default function VideoCall(){
 
     let [showModal, setModal] = useState(true);
 
-    let [screenAvailable, setScreenAvailable] = useState();
+    let [screenAvailable, setScreenAvailable] = useState(false);
 
     let [messages, setMessages] = useState([])
 
@@ -66,10 +75,18 @@ export default function VideoCall(){
     let [askForUsername, setAskForUsername] = useState(true);
 
     let [username, setUsername] = useState("");
+    const usernameRef = useRef(""); // stable ref so closures always see latest username
+    // Refs for current av state – avoids stale closures in socket emit callbacks
+    const audioRef = useRef(true);
+    const videoStateRef = useRef(true);
 
     const videoRef = useRef([])
 
     let [videos, setVideos] = useState([]);
+
+    // ---------- peer meta: username + av state for each remote socket ----------
+    // { [socketId]: { username: string, audio: bool, video: bool } }
+    const [peerMeta, setPeerMeta] = useState({});
 
     // ---------- transcription + summary state ----------
     const recognitionRef = useRef(null);
@@ -77,8 +94,8 @@ export default function VideoCall(){
     const [captions, setCaptions] = useState([]); // combined transcript: local + remote chunks, used for end-of-meeting screen only
     const meetingPathRef = useRef(""); // mirrors the "path" used in join-call (window.location.href)
 
-    // ---------- NEW: end-of-meeting screen state ----------
-    const [meetingEnded, setMeetingEnded] = useState(false); // controls the post-call screen
+    // ---------- end-of-meeting screen state ----------
+    const [meetingEnded, setMeetingEnded] = useState(false);
     const [activeTab, setActiveTab] = useState("transcript"); // "transcript" | "summary"
     const [summary, setSummary] = useState(null);
     const [summaryLoading, setSummaryLoading] = useState(false);
@@ -284,7 +301,12 @@ export default function VideoCall(){
         if (videoTrack) {
             const newState = !videoTrack.enabled;
             videoTrack.enabled = newState;
+            videoStateRef.current = newState;
             setVideo(newState);
+            // broadcast av state change to peers
+            if (socketRef.current) {
+                socketRef.current.emit('av-change', { audio: audioRef.current, video: newState });
+            }
         }
     };
     
@@ -293,8 +315,12 @@ export default function VideoCall(){
         if (audioTrack) {
             const newState = !audioTrack.enabled;
             audioTrack.enabled = newState;
+            audioRef.current = newState;
             setAudio(newState);
-
+            // broadcast av state change to peers
+            if (socketRef.current) {
+                socketRef.current.emit('av-change', { audio: newState, video: videoStateRef.current });
+            }
             // tie live transcription to mic mute state
             if (newState) {
                 startTranscription();
@@ -450,14 +476,27 @@ export default function VideoCall(){
         socketRef.current.on('signal', gotMessageFromServer)
 
         socketRef.current.on('connect', () => {
-            meetingPathRef.current = window.location.href; // keep the room path for transcript/summary events
+            meetingPathRef.current = window.location.href;
             socketRef.current.emit('join-call', window.location.href)
             socketIdRef.current = socketRef.current.id
+
+            // Announce ourselves to peers already in the room
+            socketRef.current.emit('user-meta', {
+                username: usernameRef.current || "Guest",
+                audio: true,
+                video: true
+            });
 
             socketRef.current.on('chat-message', addMessage)
 
             socketRef.current.on('user-left', (id) => {
                 setVideos((videos) => videos.filter((video) => video.socketId !== id))
+                // clean up that peer's meta
+                setPeerMeta((prev) => {
+                    const next = { ...prev };
+                    delete next[id];
+                    return next;
+                });
             })
 
             // receive transcript chunks from other participants
@@ -473,6 +512,22 @@ export default function VideoCall(){
                 } else {
                     setSummary(summary);
                 }
+            });
+
+            // receive username + av state from a peer (sent on join or re-announced)
+            socketRef.current.on('user-meta', ({ socketId, username: peerName, audio: peerAudio, video: peerVideo }) => {
+                setPeerMeta((prev) => ({
+                    ...prev,
+                    [socketId]: { username: peerName, audio: peerAudio, video: peerVideo }
+                }));
+            });
+
+            // receive av toggle updates from a peer
+            socketRef.current.on('av-change', ({ socketId, audio: peerAudio, video: peerVideo }) => {
+                setPeerMeta((prev) => ({
+                    ...prev,
+                    [socketId]: { ...(prev[socketId] || {}), audio: peerAudio, video: peerVideo }
+                }));
             });
 
             socketRef.current.on('user-joined', (id, clients) => {
@@ -577,177 +632,146 @@ export default function VideoCall(){
         connectToSocketServer();
     }
     let connect=()=>{
-        setAskForUsername(false);  
+        usernameRef.current = username; // capture stable ref before closures form
+        setAskForUsername(false);
 
-   
         setTimeout(() => {
             if (localVideoref.current && window.localStream) {
-            localVideoref.current.srcObject = window.localStream;
+                localVideoref.current.srcObject = window.localStream;
             }
-        }, 0);  
+        }, 0);
 
-        getMedia(); 
+        getMedia();
 
         // start transcribing the local user's mic once they join
         setTimeout(() => startTranscription(), 500);
     }
 
-    // ---------- NEW: post-call screen ----------
+    // ---------- post-call screen ----------
     if (meetingEnded) {
         return (
-            <div style={styles.endScreenWrap}>
-                <div style={styles.endScreenCard}>
-                    <h2 style={{ marginTop: 0 }}>Meeting Ended</h2>
+            <div className="end-root">
+                <div className="end-card">
+                    <div className="end-icon">📋</div>
+                    <h2 className="end-title">Meeting Ended</h2>
+                    <p className="end-sub">Your transcript and AI summary are ready.</p>
 
-                    <div style={styles.tabRow}>
+                    <div className="end-tabs">
                         <button
-                            style={activeTab === "transcript" ? styles.tabActive : styles.tab}
+                            className={`end-tab${activeTab === "transcript" ? " active" : ""}`}
                             onClick={() => setActiveTab("transcript")}
                         >
-                            Show Transcription
+                            📝 Transcript
                         </button>
                         <button
-                            style={activeTab === "summary" ? styles.tabActive : styles.tab}
+                            className={`end-tab${activeTab === "summary" ? " active" : ""}`}
                             onClick={() => setActiveTab("summary")}
                         >
-                            Show Summary
+                            🤖 AI Summary
                         </button>
                     </div>
 
                     {activeTab === "transcript" && (
                         <div>
-                            <div style={styles.contentBox}>
-                                {captions.length === 0 && <p>No speech was transcribed during this meeting.</p>}
+                            <div className="end-content-box">
+                                {captions.length === 0 && <p style={{ color: "#55556a" }}>No speech was transcribed during this meeting.</p>}
                                 {captions.map((c, i) => (
-                                    <p key={i} style={{ margin: "4px 0" }}>
-                                        <strong>{c.userName}:</strong> {c.text}
+                                    <p key={i} style={{ margin: "6px 0" }}>
+                                        <strong style={{ color: "#ff8c42" }}>{c.userName}:</strong> {c.text}
                                     </p>
                                 ))}
                             </div>
-                            <Button variant="contained" onClick={downloadTranscriptAsTxt} style={{ marginTop: 12 }}>
-                                Download Transcript (.txt)
-                            </Button>
+                            <button className="end-dl-btn" onClick={downloadTranscriptAsTxt}>
+                                ⬇ Download Transcript (.txt)
+                            </button>
                         </div>
                     )}
 
                     {activeTab === "summary" && (
                         <div>
-                            <div style={styles.contentBox}>
-                                {summaryLoading && <p>Generating summary, please wait...</p>}
-                                {summaryError && <p style={{ color: "red" }}>{summaryError}</p>}
-                                {summary && <pre style={styles.summaryPre}>{summary}</pre>}
+                            <div className="end-content-box">
+                                {summaryLoading && <p style={{ color: "#9898b0" }}>⏳ Generating summary, please wait…</p>}
+                                {summaryError && <p style={{ color: "#f87171" }}>{summaryError}</p>}
+                                {summary && <pre style={{ whiteSpace: "pre-wrap", fontFamily: "inherit", fontSize: "0.9rem", margin: 0 }}>{summary}</pre>}
                             </div>
-                            <Button
-                                variant="contained"
-                                onClick={downloadSummaryAsPdf}
-                                disabled={!summary}
-                                style={{ marginTop: 12 }}
-                            >
-                                Download Summary (.pdf)
-                            </Button>
+                            <button className="end-dl-btn" onClick={downloadSummaryAsPdf} disabled={!summary}>
+                                ⬇ Download Summary (.pdf)
+                            </button>
                         </div>
                     )}
 
-                    <div style={styles.closeRow}>
-                        <Button variant="outlined" onClick={() => navigate("/")}>
-                            Close
-                        </Button>
+                    <div className="end-close-row">
+                        <button className="end-close-btn" onClick={() => navigate("/home")}>
+                            ← Back to Home
+                        </button>
                     </div>
                 </div>
             </div>
         );
     }
      
-    return(
+    return (
         <div>
-            {askForUsername===true?
-            <div>
-                <h2>Connect to lobby</h2>
-                <TextField id="outlined-basic" label="Username" value={username} variant="outlined" onChange={(e)=>setUsername(e.target.value)} />
-                <Button variant="contained" onClick={connect}>Connect</Button>
-                <div>
-                    <video ref={localVideoref} autoPlay muted></video>
-                </div>
-            </div>:
-            <div className="meetVideoContainer">
-                <div className="buttonContainer">
-                    <IconButton style={{color:"white"}} onClick={handleVideo}>
-                        {video===true?<VideocamIcon/>:<VideocamOffIcon/>}
-                    </IconButton>
-                    <IconButton style={{color:"white"}} onClick={handleAudio}>
-                        {audio===true?<MicIcon/>:<MicOffIcon/>}
-                    </IconButton>
-                    {screenAvailable===true?
-                        <IconButton style={{color:"white"}} onClick={handleScreen}>
-                            {screen===true?<ScreenShareIcon/>:<StopScreenShareIcon/>}
-                        </IconButton>
-                    :<div></div>}
-                    <Badge badgeContent={newMessages} max={999} color="secondary">
-                        <IconButton style={{color:"white"}} onClick={toggleChat}><ChatIcon/></IconButton>
-                    </Badge>
-                    <IconButton style={{color:"red"}} onClick={handleEndMeeting}>
-                        <CallEndIcon/>
-                    </IconButton>
-
-                </div>
-                <video className="userVideo" ref={localVideoref} autoPlay muted></video>
-                <div className="allUserVideo">
-                {videos.map((video)=>(
-                     
-                     <video
-                         data-ref={video.socketId}
-                         ref={ref=>{
-                             if(ref && video.stream){
-                                 ref.srcObject=video.stream
-                             }
-                         }}
-                         autoPlay
-                         muted
-                     >
-
-                     </video>
-                  
-             ))}
-                </div>
-
-                {/* live captions intentionally not shown during the call - still recorded in background for the end-of-meeting transcript */}
-
-                {/* chat slide-in panel */}
-                <div style={showChat ? styles.chatPanelOpen : styles.chatPanelClosed}>
-                    <div style={styles.chatHeader}>
-                        <div style={styles.chatHeaderTitle}>
-                            <ChatIcon style={{ fontSize: 18, color: "#7aa6ff" }} />
-                            <span>In-call messages</span>
-                        </div>
-                        <IconButton style={styles.chatCloseBtn} onClick={toggleChat} size="small">
-                            ✕
-                        </IconButton>
+            {askForUsername === true ? (
+                /* ── Lobby screen ── */
+                <div className="lobby-root">
+                    <div className="lobby-mesh" />
+                    <div className="lobby-card">
+                        <video
+                            className="lobby-preview"
+                            ref={localVideoref}
+                            autoPlay
+                            muted
+                        />
+                        <h2 className="lobby-title">Ready to join?</h2>
+                        <p className="lobby-sub">Enter your display name to connect to the call.</p>
+                        <input
+                            id="lobby-username-input"
+                            className="lobby-input"
+                            placeholder="Your name…"
+                            value={username}
+                            onChange={(e) => setUsername(e.target.value)}
+                            onKeyDown={(e) => e.key === "Enter" && connect()}
+                            autoFocus
+                        />
+                        <button
+                            id="lobby-connect-btn"
+                            className="lobby-join-btn"
+                            onClick={connect}
+                        >
+                            Join Now →
+                        </button>
                     </div>
-
-                    <div style={styles.chatMessages} className="chat-messages-scroll">
-                        {messages.length === 0 && (
-                            <div style={styles.chatEmptyState}>
-                                <ChatIcon style={{ fontSize: 28, color: "#4a4d57", marginBottom: 8 }} />
-                                <p style={styles.chatEmptyText}>No messages yet</p>
-                                <p style={styles.chatEmptySubtext}>Messages are visible to everyone on the call</p>
-                            </div>
-                        )}
-                        {messages.map((m, i) => {
-                            const isMine = m.socketIdSender === socketIdRef.current;
+                </div>
+            ) : (
+                /* ── Active call screen ── */
+                <div className="meetVideoContainer">
+                    {/* Remote videos */}
+                    <div className="allUserVideo">
+                        {videos.map((v) => {
+                            const meta = peerMeta[v.socketId] || {};
+                            const peerAudio = meta.audio !== false; // default true
+                            const peerVideo = meta.video !== false; // default true
+                            const peerName  = meta.username || "Guest";
                             return (
-                                <div
-                                    key={i}
-                                    style={isMine ? styles.chatRowMine : styles.chatRowOther}
-                                >
-                                    {!isMine && (
-                                        <div style={styles.chatAvatar}>
-                                            {(m.sender || "?").charAt(0).toUpperCase()}
-                                        </div>
-                                    )}
-                                    <div style={styles.chatBubbleGroup}>
-                                        {!isMine && <span style={styles.chatSenderLabel}>{m.sender}</span>}
-                                        <div style={isMine ? styles.chatBubbleMine : styles.chatBubbleOther}>
-                                            {m.data}
+                                <div key={v.socketId} className="video-tile">
+                                    <video
+                                        data-ref={v.socketId}
+                                        ref={(ref) => {
+                                            if (ref && v.stream) ref.srcObject = v.stream;
+                                        }}
+                                        autoPlay
+                                        muted
+                                    />
+                                    <div className="video-tile-bar">
+                                        <span className="video-tile-name">{peerName}</span>
+                                        <div className="video-tile-icons">
+                                            {peerAudio
+                                                ? <MicIcon className="tile-icon tile-icon--on" />
+                                                : <MicOffIcon className="tile-icon tile-icon--off" />}
+                                            {peerVideo
+                                                ? <VideocamIcon className="tile-icon tile-icon--on" />
+                                                : <VideocamOffIcon className="tile-icon tile-icon--off" />}
                                         </div>
                                     </div>
                                 </div>
@@ -755,32 +779,150 @@ export default function VideoCall(){
                         })}
                     </div>
 
-                    <div style={styles.chatInputRow}>
-                        <input
-                            style={styles.chatInput}
-                            className="chat-input-field"
-                            placeholder="Send a message"
-                            value={message}
-                            onChange={(e) => setMessage(e.target.value)}
-                            onKeyDown={(e) => { if (e.key === "Enter") sendMessage(); }}
-                        />
+                    {/* Local (self) PiP */}
+                    <div className="local-pip-wrap">
+                        <video className="userVideo" ref={localVideoref} autoPlay muted />
+                        <div className="local-pip-bar">
+                            <span className="video-tile-name">{username || "You"} (You)</span>
+                            <div className="video-tile-icons">
+                                {audio
+                                    ? <MicIcon className="tile-icon tile-icon--on" />
+                                    : <MicOffIcon className="tile-icon tile-icon--off" />}
+                                {video
+                                    ? <VideocamIcon className="tile-icon tile-icon--on" />
+                                    : <VideocamOffIcon className="tile-icon tile-icon--off" />}
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* Controls bar */}
+                    <div className="buttonContainer">
                         <button
-                            style={message.trim() ? styles.chatSendBtnActive : styles.chatSendBtn}
-                            onClick={sendMessage}
-                            disabled={!message.trim()}
+                            id="ctrl-video"
+                            className={`ctrl-btn${!video ? " active" : ""}`}
+                            onClick={handleVideo}
+                            title={video ? "Turn off camera" : "Turn on camera"}
                         >
-                            ➤
+                            {video ? <VideocamIcon /> : <VideocamOffIcon />}
+                        </button>
+
+                        <button
+                            id="ctrl-audio"
+                            className={`ctrl-btn${!audio ? " active" : ""}`}
+                            onClick={handleAudio}
+                            title={audio ? "Mute" : "Unmute"}
+                        >
+                            {audio ? <MicIcon /> : <MicOffIcon />}
+                        </button>
+
+                        {screenAvailable && (
+                            <button
+                                id="ctrl-screen"
+                                className={`ctrl-btn${screen ? " active" : ""}`}
+                                onClick={handleScreen}
+                                title={screen ? "Stop sharing" : "Share screen"}
+                            >
+                                {screen ? <ScreenShareIcon /> : <StopScreenShareIcon />}
+                            </button>
+                        )}
+
+                        <button
+                            id="ctrl-chat"
+                            className="ctrl-btn"
+                            onClick={toggleChat}
+                            title="Chat"
+                            style={{ position: "relative" }}
+                        >
+                            <ChatIcon />
+                            {newMessages > 0 && (
+                                <span style={{
+                                    position: "absolute",
+                                    top: 4, right: 4,
+                                    width: 16, height: 16,
+                                    borderRadius: "50%",
+                                    background: "#ff8c42",
+                                    color: "white",
+                                    fontSize: 9,
+                                    fontWeight: 700,
+                                    display: "flex",
+                                    alignItems: "center",
+                                    justifyContent: "center"
+                                }}>{newMessages > 9 ? "9+" : newMessages}</span>
+                            )}
+                        </button>
+
+                        <button
+                            id="ctrl-end"
+                            className="ctrl-btn end-call"
+                            onClick={handleEndMeeting}
+                            title="End call"
+                        >
+                            <CallEndIcon />
                         </button>
                     </div>
-                </div>
-                 
-            </div>
-            }
-            </div>
-                 
 
-        
-    )
+                    {/* Chat slide-in panel */}
+                    <div style={showChat ? styles.chatPanelOpen : styles.chatPanelClosed}>
+                        <div style={styles.chatHeader}>
+                            <div style={styles.chatHeaderTitle}>
+                                <ChatIcon style={{ fontSize: 18, color: "#ff8c42" }} />
+                                <span>In-call Messages</span>
+                            </div>
+                            <IconButton style={styles.chatCloseBtn} onClick={toggleChat} size="small">
+                                ✕
+                            </IconButton>
+                        </div>
+
+                        <div style={styles.chatMessages} className="chat-messages-scroll">
+                            {messages.length === 0 && (
+                                <div style={styles.chatEmptyState}>
+                                    <ChatIcon style={{ fontSize: 28, color: "#4a4d57", marginBottom: 8 }} />
+                                    <p style={styles.chatEmptyText}>No messages yet</p>
+                                    <p style={styles.chatEmptySubtext}>Messages are visible to everyone on the call</p>
+                                </div>
+                            )}
+                            {messages.map((m, i) => {
+                                const isMine = m.socketIdSender === socketIdRef.current;
+                                return (
+                                    <div key={i} style={isMine ? styles.chatRowMine : styles.chatRowOther}>
+                                        {!isMine && (
+                                            <div style={styles.chatAvatar}>
+                                                {(m.sender || "?").charAt(0).toUpperCase()}
+                                            </div>
+                                        )}
+                                        <div style={styles.chatBubbleGroup}>
+                                            {!isMine && <span style={styles.chatSenderLabel}>{m.sender}</span>}
+                                            <div style={isMine ? styles.chatBubbleMine : styles.chatBubbleOther}>
+                                                {m.data}
+                                            </div>
+                                        </div>
+                                    </div>
+                                );
+                            })}
+                        </div>
+
+                        <div style={styles.chatInputRow}>
+                            <input
+                                style={styles.chatInput}
+                                className="chat-input-field"
+                                placeholder="Send a message…"
+                                value={message}
+                                onChange={(e) => setMessage(e.target.value)}
+                                onKeyDown={(e) => { if (e.key === "Enter") sendMessage(); }}
+                            />
+                            <button
+                                style={message.trim() ? styles.chatSendBtnActive : styles.chatSendBtn}
+                                onClick={sendMessage}
+                                disabled={!message.trim()}
+                            >
+                                ➤
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+        </div>
+    );
 }
 
 const styles = {

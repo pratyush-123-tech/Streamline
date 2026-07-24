@@ -13,7 +13,12 @@ const server=createServer(app);
 const io=connectToSocket(server);
 import userRoutes from "./routers/users.js"
 app.set("port",(process.env.PORT || 8080));
-app.use(cors());
+app.use(cors({
+  origin: process.env.FRONTEND_URL || "http://localhost:5173",
+  methods: ["GET", "POST"],
+  credentials: true,
+}));
+
  
 app.use(express.json({limit:"40kb"}));
 app.use(express.urlencoded({limit:"40kb",extended:true}));

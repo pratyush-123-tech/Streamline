@@ -79,4 +79,25 @@ const addToHistory = async (req, res) => {
 }
 
 
-export { login, register, getUserHistory, addToHistory }
+const joinAsGuest = async (req, res) => {
+    try {
+        const suffix = Math.floor(1000 + Math.random() * 9000);
+        const guestUsername = `Guest_${suffix}`;
+        const randomPassword = crypto.randomBytes(16).toString("hex");
+        const hashedPassword = await bcrypt.hash(randomPassword, 10);
+        const token = crypto.randomBytes(20).toString("hex");
+
+        const newUser = new User({
+            username: guestUsername,
+            password: hashedPassword,
+            token: token,
+        });
+        await newUser.save();
+
+        return res.status(httpStatus.CREATED).json({ token, username: guestUsername });
+    } catch (e) {
+        res.json({ message: `Something went wrong ${e}` });
+    }
+};
+
+export { login, register, getUserHistory, addToHistory, joinAsGuest }

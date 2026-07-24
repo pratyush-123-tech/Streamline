@@ -1,32 +1,92 @@
-import React from "react";
-import "./LandingPage.css"
-export default function LandingPage(){
-    return(
-        <div className="landingPageContainer">
-            <div className="parent">
-                <div className="navHeader">
-                    <h3>Streamline</h3>
-                </div>
-                <div className="navList">
-                    <div role="button" className="navItem">Join as guest</div>
-                    <div role="button" className="navItem">Register</div>
-                    <div role="button" className="navItem">Log in</div>
+import React, { useContext } from "react";
+import { useNavigate } from "react-router-dom";
+import "./LandingPage.css";
+import { AuthContext } from "../contexts/AuthContext";
 
-                </div>
-            </div>
-            <div className="landingPageMain">
-                <div className="landingText">
-                    <h1 className="landingTextHeading"><span style={{color:"#ff9839"}}>Connect</span> With your loved ones</h1>
-                    <br></br>
-                    <p>Seamless video meetings for teams and friends</p>
-                     
-                    <button className="landingTextButton"><a href="/auth">Get started</a> </button>
+export default function LandingPage() {
+  const navigate = useNavigate();
+  const { handleGuestLogin } = useContext(AuthContext);
 
-                </div>
-                <div className="landingImage">
-                    <img src="/mobile.png"></img>
-                </div>
-            </div>
+  const onGuestClick = async () => {
+    try {
+      await handleGuestLogin();
+    } catch (err) {
+      console.error("Guest login failed:", err);
+    }
+  };
+
+  return (
+    <div className="lp-root">
+      {/* ── Navbar ── */}
+      <nav className="lp-nav">
+        <span className="lp-logo">
+          <span className="lp-logo-dot" />
+          Streamline
+        </span>
+        <div className="lp-nav-actions">
+          <button
+            id="guest-nav-btn"
+            className="lp-nav-link"
+            onClick={onGuestClick}
+          >
+            Join as Guest
+          </button>
+          <a href="/auth" className="lp-nav-btn" id="get-started-nav-btn">
+            Sign In
+          </a>
         </div>
-    )
+      </nav>
+
+      {/* ── Hero ── */}
+      <section className="lp-hero">
+        <div className="lp-hero-content">
+          <div className="lp-badge">
+            <span className="lp-badge-dot" />
+            AI-Powered Video Meetings
+          </div>
+
+          <h1 className="lp-hero-title">
+            Connect With Anyone,{" "}
+            <span className="gradient-text">Anywhere</span>
+          </h1>
+
+          <p className="lp-hero-subtitle">
+            Crystal-clear video calls with real-time transcription, AI meeting
+            summaries, and seamless screen sharing — built for teams and
+            individuals alike.
+          </p>
+
+          <div className="lp-hero-actions">
+            <a href="/auth" className="lp-cta-primary" id="hero-get-started-btn">
+              Get Started Free →
+            </a>
+            <button
+              id="hero-guest-btn"
+              className="lp-cta-ghost"
+              onClick={onGuestClick}
+            >
+              <span>👤</span> Join as Guest
+            </button>
+          </div>
+        </div>
+      </section>
+
+      {/* ── Feature Chips ── */}
+      <div className="lp-features">
+        {[
+          { icon: "🎥", label: "HD Video & Audio" },
+          { icon: "🤖", label: "AI Meeting Summaries" },
+          { icon: "📝", label: "Live Transcription" },
+          { icon: "💬", label: "In-Call Chat" },
+          { icon: "🖥️", label: "Screen Sharing" },
+          { icon: "📄", label: "Downloadable Transcripts" },
+        ].map((f) => (
+          <div key={f.label} className="lp-feature-chip">
+            <span className="chip-icon">{f.icon}</span>
+            {f.label}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
 }
