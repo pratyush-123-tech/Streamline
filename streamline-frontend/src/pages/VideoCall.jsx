@@ -117,42 +117,42 @@ export default function VideoCall(){
     }
     const getPermisssions = async () => {
         try {
-            let videoStream = null;
-            let audioStream = null;
-            
+            const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+            setVideoAvailable(true);
+            setAudioAvailable(true);
+            window.localStream = stream;
+            if (localVideoref.current) {
+                localVideoref.current.srcObject = stream;
+            }
+        } catch (e) {
             try {
-                videoStream = await navigator.mediaDevices.getUserMedia({ video: true });
-                setVideoAvailable(true);
-            } catch (e) {
+                const audioStream = await navigator.mediaDevices.getUserMedia({ audio: true });
                 setVideoAvailable(false);
-            }
-
-            try {
-                audioStream = await navigator.mediaDevices.getUserMedia({ audio: true });
                 setAudioAvailable(true);
-            } catch (e) {
-                setAudioAvailable(false);
-            }
-
-            if (navigator.mediaDevices.getDisplayMedia) {
-                setScreenAvailable(true);
-            } else {
-                setScreenAvailable(false);
-            }
-
-            if (videoStream || audioStream) {
-                const tracks = [];
-                if (videoStream) tracks.push(...videoStream.getVideoTracks());
-                if (audioStream) tracks.push(...audioStream.getAudioTracks());
-                
-                const userMediaStream = new MediaStream(tracks);
-                window.localStream = userMediaStream;
+                window.localStream = audioStream;
                 if (localVideoref.current) {
-                    localVideoref.current.srcObject = userMediaStream;
+                    localVideoref.current.srcObject = audioStream;
+                }
+            } catch (err) {
+                try {
+                    const videoStream = await navigator.mediaDevices.getUserMedia({ video: true });
+                    setVideoAvailable(true);
+                    setAudioAvailable(false);
+                    window.localStream = videoStream;
+                    if (localVideoref.current) {
+                        localVideoref.current.srcObject = videoStream;
+                    }
+                } catch (error) {
+                    setVideoAvailable(false);
+                    setAudioAvailable(false);
                 }
             }
-        } catch (error) {
-            console.log(error);
+        }
+        
+        if (navigator.mediaDevices.getDisplayMedia) {
+            setScreenAvailable(true);
+        } else {
+            setScreenAvailable(false);
         }
     }
      
@@ -723,9 +723,15 @@ export default function VideoCall(){
                     <div className="lobby-card">
                         <video
                             className="lobby-preview"
-                            ref={localVideoref}
+                            ref={(ref) => {
+                                localVideoref.current = ref;
+                                if (ref && window.localStream) {
+                                    ref.srcObject = window.localStream;
+                                }
+                            }}
                             autoPlay
                             muted
+                            playsInline
                         />
                         <h2 className="lobby-title">Ready to join?</h2>
                         <p className="lobby-sub">Enter your display name to connect to the call.</p>
@@ -785,7 +791,18 @@ export default function VideoCall(){
 
                     {/* Local (self) PiP */}
                     <div className="local-pip-wrap">
-                        <video className="userVideo" ref={localVideoref} autoPlay muted />
+                        <video 
+                            className="userVideo" 
+                            ref={(ref) => {
+                                localVideoref.current = ref;
+                                if (ref && window.localStream) {
+                                    ref.srcObject = window.localStream;
+                                }
+                            }} 
+                            autoPlay 
+                            muted 
+                            playsInline 
+                        />
                         <div className="local-pip-bar">
                             <span className="video-tile-name">{username || "You"} (You)</span>
                             <div className="video-tile-icons">
