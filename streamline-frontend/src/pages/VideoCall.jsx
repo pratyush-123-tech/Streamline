@@ -115,24 +115,23 @@ export default function VideoCall(){
     let handleScreen=()=>{
         setScreen(!screen);
     }
-    const getPermisssions=async ()=>{
+    const getPermisssions = async () => {
         try {
-            const videoPermission = await navigator.mediaDevices.getUserMedia({ video: true });
-            if (videoPermission) {
+            let videoStream = null;
+            let audioStream = null;
+            
+            try {
+                videoStream = await navigator.mediaDevices.getUserMedia({ video: true });
                 setVideoAvailable(true);
-                console.log('Video permission granted');
-            } else {
+            } catch (e) {
                 setVideoAvailable(false);
-                console.log('Video permission denied');
             }
 
-            const audioPermission = await navigator.mediaDevices.getUserMedia({ audio: true });
-            if (audioPermission) {
+            try {
+                audioStream = await navigator.mediaDevices.getUserMedia({ audio: true });
                 setAudioAvailable(true);
-                console.log('Audio permission granted');
-            } else {
+            } catch (e) {
                 setAudioAvailable(false);
-                console.log('Audio permission denied');
             }
 
             if (navigator.mediaDevices.getDisplayMedia) {
@@ -141,15 +140,15 @@ export default function VideoCall(){
                 setScreenAvailable(false);
             }
 
-            if (videoAvailable || audioAvailable) {
-                const userMediaStream = await navigator.mediaDevices.getUserMedia({ video: videoAvailable, audio: audioAvailable });
-                if (userMediaStream) {
-                    window.localStream = userMediaStream;
-                    if (localVideoref.current) {
-                        localVideoref.current.srcObject = userMediaStream;
-                        console.log(localVideoref.current);
-                        console.log(localVideoref.current.srcObject);
-                    }
+            if (videoStream || audioStream) {
+                const tracks = [];
+                if (videoStream) tracks.push(...videoStream.getVideoTracks());
+                if (audioStream) tracks.push(...audioStream.getAudioTracks());
+                
+                const userMediaStream = new MediaStream(tracks);
+                window.localStream = userMediaStream;
+                if (localVideoref.current) {
+                    localVideoref.current.srcObject = userMediaStream;
                 }
             }
         } catch (error) {
