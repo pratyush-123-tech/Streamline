@@ -725,7 +725,7 @@ export default function VideoCall(){
                             className="lobby-preview"
                             ref={(ref) => {
                                 localVideoref.current = ref;
-                                if (ref && window.localStream) {
+                                if (ref && window.localStream && ref.srcObject !== window.localStream) {
                                     ref.srcObject = window.localStream;
                                 }
                             }}
@@ -768,7 +768,9 @@ export default function VideoCall(){
                                     <video
                                         data-ref={v.socketId}
                                         ref={(ref) => {
-                                            if (ref && v.stream) ref.srcObject = v.stream;
+                                            if (ref && v.stream && ref.srcObject !== v.stream) {
+                                                ref.srcObject = v.stream;
+                                            }
                                         }}
                                         autoPlay
                                         muted
@@ -795,7 +797,7 @@ export default function VideoCall(){
                             className="userVideo" 
                             ref={(ref) => {
                                 localVideoref.current = ref;
-                                if (ref && window.localStream) {
+                                if (ref && window.localStream && ref.srcObject !== window.localStream) {
                                     ref.srcObject = window.localStream;
                                 }
                             }} 
