@@ -532,6 +532,11 @@ export default function VideoCall(){
 
             socketRef.current.on('user-joined', (id, clients) => {
                 clients.forEach((socketListId) => {
+                    // Do not create a connection for our own socket ID
+                    if (socketListId === socketIdRef.current) return;
+                    
+                    // Do not overwrite an existing connection (this was crashing the call on 3rd user join)
+                    if (connections[socketListId]) return;
 
                     connections[socketListId] = new RTCPeerConnection(peerConfigConnections)
                     // Wait for their ice candidate       
