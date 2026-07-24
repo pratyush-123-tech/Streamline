@@ -13,10 +13,9 @@ function generateMeetingCode() {
   return `${segment(4)}-${segment(4)}-${segment(4)}`;
 }
 
-const isGuest = localStorage.getItem("isGuest") === "true";
-
 function Home() {
   const navigate = useNavigate();
+  const isGuest = localStorage.getItem("isGuest") === "true";
   const [meetingCode, setMeetingCode] = useState("");
   const [joining, setJoining] = useState(false);
 
